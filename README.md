@@ -18,7 +18,7 @@ DOM XSS Hunter
 1. Клонируй репозиторий:
   ```bash
    git clone https://github.com/Maksimqa322/Domushnik
-   cd dom-xss-hunter
+   cd Domushnik
    ```
 
 2. Установи зависимости Python:
