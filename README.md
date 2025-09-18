@@ -17,7 +17,7 @@ DOM XSS Hunter
 Установка
 1. Клонируй репозиторий:
   ```bash
-   git clone https://github.com/yourname/dom-xss-hunter.git
+   git clone https://github.com/Maksimqa322/Domushnik
    cd dom-xss-hunter
    ```
 
