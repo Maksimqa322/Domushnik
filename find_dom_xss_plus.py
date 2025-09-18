@@ -10,10 +10,10 @@ import json
 import csv
 import time
 import itertools
-from urllib.parse import urljoin, urlparse, quote_plus
+from urllib.parse import urljoin, quote_plus
 from html.parser import HTMLParser
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Optional niceties
 try:
@@ -48,10 +48,13 @@ try:
     HAVE_COLORAMA = True
 except Exception:
     HAVE_COLORAMA = False
-    class _C:
-        RESET = ""
-    Fore = type("F", (), {"GREEN":"", "YELLOW":"", "CYAN":"", "MAGENTA":"", "RED":"", "WHITE":""})
-    Style = type("S", (), {"BRIGHT":""})
+    class _Empty:
+        def __getattr__(self, _): return ""
+    Fore = _Empty()
+    Style = _Empty()
+
+# Global runtime flags (set in main)
+VERBOSE = False
 
 # --------------------------
 # Banner and logging helpers
@@ -79,9 +82,13 @@ def print_banner():
             print(Fore.YELLOW + subtitle + Style.RESET_ALL + "\n")
 
 def now_ts():
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    # timezone-aware UTC timestamp
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 def log(msg, level="INFO"):
+    # if DEBUG and not VERBOSE -> skip
+    if level == "DEBUG" and not VERBOSE:
+        return
     prefix = f"[{now_ts()}] [{level}]"
     if use_rich:
         console.log(f"{prefix} {msg}")
@@ -154,8 +161,9 @@ SINK_PATTERNS = [
 ]
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in SINK_PATTERNS]
 
+# improved exclude (catch many min variants)
 DEFAULT_EXCLUDE_PATTERNS = [
-    re.compile(r"\.min\.js$", re.IGNORECASE),
+    re.compile(r"\.min(?:[._A-Za-z0-9-]*)\.js$", re.IGNORECASE),
     re.compile(r"jquery", re.IGNORECASE),
     re.compile(r"node_modules", re.IGNORECASE),
     re.compile(r"/vendor/", re.IGNORECASE),
@@ -255,7 +263,7 @@ def find_patterns_with_positions(text):
     return found
 
 # --------------------------
-# Simple PoC templates (kept, optional)
+# POC templates (optional)
 # --------------------------
 POC_TEMPLATES = [
     (re.compile(r"innerHTML", re.IGNORECASE), "<img src=x onerror=alert(1)>"),
@@ -374,6 +382,7 @@ async def process_single_url(url, sem, args):
             wayback_results = wayback_results[:args.max_wayback]
             log(f"Обрезали results wayback до {args.max_wayback}")
     if not args.nokatana:
+        # Katana accepts -u or -list; using -u form may work as before
         katana_results = await run_tool_no_input(["katana", "-u", url, "-silent"], timeout=args.tool_timeout)
         if args.max_katana and len(katana_results) > args.max_katana:
             katana_results = katana_results[:args.max_katana]
@@ -493,60 +502,68 @@ def save_csv(path, aggregated):
 # Final printing helpers (clean and compact)
 # --------------------------
 def pretty_source_name(src):
-    # shorten for display if very long
     if len(src) > 100:
-        return src[:90] + "..." 
+        return src[:90] + "..."
     return src
 
-def print_compact_results(overall):
-    """
-    Print in format:
-    <js-url>
-      - innerHTML (line 123)
-      - eval (line 77)
-    """
+def humanize_pattern_from_entry(it):
+    # Prefer using the actual matched text
+    mt = (it.get("match_text") or "").strip()
+    if mt:
+        m2 = re.search(r"[A-Za-z_][A-Za-z0-9_]+", mt)
+        if m2:
+            return m2.group(0)
+    # Fallback to cleaning pattern string (remove \b and escapes)
+    pat = it.get("pattern","")
+    cleaned = re.sub(r"\\b|\\", "", pat)
+    m3 = re.search(r"[A-Za-z_][A-Za-z0-9_]+", cleaned)
+    if m3:
+        return m3.group(0)
+    return cleaned[:40] or "match"
+
+def print_compact_results(overall, max_per_source=100):
     total = sum(len(v) for v in overall.values())
     step(f"Найдено потенциально опасных мест: {total}")
-    print()  # newline
+    print()
 
-    diagram_lines = []  # to build ASCII diagram later
+    diagram_lines = []
     for src, items in overall.items():
         if not items:
             continue
         readable_src = pretty_source_name(src)
-        # Build compact list of unique patterns with line numbers
-        compact = []
-        seen = set()
+        # group by human-friendly name, collect line numbers and one snippet
+        grouped = {}
         for it in items:
-            pat = it.get("pattern") or it.get("match_text") or "?"
-            line = it.get("line", "")
-            key = (pat, line)
-            if key in seen:
-                continue
-            seen.add(key)
-            # simplify pattern for display: remove leading \b and escapes
-            disp_pat = pat
-            # try extract human-friendly token from pattern or match_text
-            # if pattern contains words separated by \b, try first word-like token
-            m = re.search(r"[A-Za-z_][A-Za-z0-9_]+", disp_pat)
-            if m:
-                disp_pat = m.group(0)
-            compact.append((disp_pat, line, it.get("match_text","")))
+            name = humanize_pattern_from_entry(it)
+            grouped.setdefault(name, {"lines": set(), "example": None})
+            grouped[name]["lines"].add(it.get("line") or "")
+            if grouped[name]["example"] is None:
+                grouped[name]["example"] = it.get("snippet","").splitlines()[0] if it.get("snippet") else ""
+        # produce list sorted by name
+        entries = sorted(grouped.items(), key=lambda x: x[0])
+        # limit
+        omitted = 0
+        if len(entries) > max_per_source:
+            omitted = len(entries) - max_per_source
+            entries = entries[:max_per_source]
         # print block
         print(Fore.CYAN + readable_src + Style.RESET_ALL)
-        for p, ln, mt in compact:
-            print("  " + Fore.RED + "- " + Style.RESET_ALL + f"{p} (line {ln})")
+        for name, data in entries:
+            lines_str = ", ".join(str(x) for x in sorted(data["lines"]))
+            print("  " + Fore.RED + "- " + Style.RESET_ALL + f"{name} (lines: {lines_str})")
+        if omitted:
+            print("  " + Fore.YELLOW + f"... and {omitted} more (use --max-per-source to increase)" + Style.RESET_ALL)
         print()
-        # prepare diagram entry
-        diagram_lines.append((readable_src, compact))
-    # draw ASCII diagram for found only
+        diagram_lines.append((readable_src, entries))
+    # ASCII diagram
     if diagram_lines:
         print(Fore.GREEN + Style.BRIGHT + "=== ASCII схема найденных уязвимостей ===" + Style.RESET_ALL)
-        for src, compact in diagram_lines:
+        for src, entries in diagram_lines:
             print(Fore.CYAN + f"[{src}]" + Style.RESET_ALL)
-            for i, (p, ln, mt) in enumerate(compact):
-                branch = "├─" if i < len(compact)-1 else "└─"
-                print("  " + branch + f" {p} (line {ln})")
+            for i, (name, data) in enumerate(entries):
+                branch = "├─" if i < len(entries)-1 else "└─"
+                lines_str = ", ".join(str(x) for x in sorted(data["lines"]))
+                print("  " + branch + f" {name} (lines: {lines_str})")
             print()
     else:
         print(Fore.YELLOW + "Уязвимых мест не найдено." + Style.RESET_ALL)
@@ -555,8 +572,12 @@ def print_compact_results(overall):
 # Main
 # --------------------------
 async def main(args):
+    global VERBOSE
+    VERBOSE = bool(args.verbose)
     print_banner()
     step("Запуск сканера")
+    spinner_task("Подготовка... (короткая пауза)", duration=0.25)
+
     urls = []
     if args.url:
         urls.append(args.url)
@@ -572,7 +593,6 @@ async def main(args):
     step("Запускаем обработку всех URL (параллельно)")
     results = await asyncio.gather(*coros)
 
-    # flatten into overall map
     overall = {}
     for res in results:
         for k, v in res.items():
@@ -582,11 +602,10 @@ async def main(args):
         log("Ничего опасного не найдено по предоставленным URL.", level="INFO")
         return
 
-    print_compact_results(overall)
+    print_compact_results(overall, max_per_source=args.max_per_source)
 
-    # save outputs if requested
     if args.json_out:
-        out_json = {"scanned_at": datetime.utcnow().isoformat() + "Z", "results": overall}
+        out_json = {"scanned_at": datetime.now(timezone.utc).isoformat(), "results": overall}
         save_json(args.json_out, out_json)
         log(f"[+] JSON saved to {args.json_out}")
     if args.csv_out:
@@ -609,15 +628,18 @@ if __name__ == "__main__":
     parser.add_argument("--no-filter", action="store_true", help="Отключить фильтрацию минифицированных/библиотечных файлов")
     parser.add_argument("--poc", action="store_true", help="Генерировать простые PoC для найденных sink'ов")
     parser.add_argument("--noaio", action="store_true", help="Не использовать aiohttp (если доступно) — падёт в синхронный режим")
+    parser.add_argument("--verbose", action="store_true", help="Показывать DEBUG-логи")
+    parser.add_argument("--max-per-source", type=int, default=100, help="Максимум уникальных паттернов для показа в одном source")
     args = parser.parse_args()
 
     if not use_aiohttp and not args.noaio:
         log("aiohttp не установлен — перехожу в синхронный режим.", level="WARN")
         args.noaio = True
 
-    # Sync fallback (keeps same compact output)
     if args.noaio:
+        # Sync fallback (keeps same compact output)
         print_banner()
+        VERBOSE = bool(args.verbose)
         step("Запуск в синхронном режиме (noaio=True)")
         urls = []
         if args.url:
@@ -694,16 +716,15 @@ if __name__ == "__main__":
         if not overall_sync:
             log("Ничего не найдено (синхронный режим).", level="INFO")
             sys.exit(0)
-        print_compact_results(overall_sync)
+        print_compact_results(overall_sync, max_per_source=args.max_per_source)
         if args.json_out:
-            save_json(args.json_out, {"scanned_at": datetime.utcnow().isoformat()+"Z", "results": overall_sync})
+            save_json(args.json_out, {"scanned_at": datetime.now(timezone.utc).isoformat(), "results": overall_sync})
             log(f"[+] JSON saved to {args.json_out}")
         if args.csv_out:
             save_csv(args.csv_out, overall_sync)
             log(f"[+] CSV saved to {args.csv_out}")
         sys.exit(0)
 
-    # Run async main
     try:
         asyncio.run(main(args))
     except KeyboardInterrupt:
