@@ -1,5 +1,5 @@
 # Domushnik
-Хорошо 👍 Вот вариант `README.md` для GitHub:
+
 
 ````markdown
 # DOM XSS Hunter
