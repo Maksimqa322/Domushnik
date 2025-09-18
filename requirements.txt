@@ -1,4 +1,6 @@
-aiohttp
-asyncio
-colorama
-tqdm
+aiohttp>=3.8
+rich>=13.0
+pyfiglet>=0.8
+colorama>=0.4
+requests>=2.28
+tqdm>=4.64
