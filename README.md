@@ -16,19 +16,18 @@ DOM XSS Hunter
 
 Установка
 1. Клонируй репозиторий:
-2.
   ```bash
    git clone https://github.com/yourname/dom-xss-hunter.git
    cd dom-xss-hunter
    ```
 
-4. Установи зависимости Python:
+2. Установи зависимости Python:
 
    ```bash
    pip install -r requirements.txt
    ```
 
-5. Убедись, что установлены внешние инструменты:
+3. Убедись, что установлены внешние инструменты:
 
    * [waybackurls](https://github.com/tomnomnom/waybackurls)
    * [katana](https://github.com/projectdiscovery/katana)
