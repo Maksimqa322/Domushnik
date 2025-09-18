@@ -1,33 +1,33 @@
 # Domushnik
 
 
-````markdown
-# DOM XSS Hunter
+
+DOM XSS Hunter
 
 Инструмент для автоматизированного поиска потенциальных DOM XSS sink-ов в JavaScript-файлах.  
 Скрипт комбинирует `waybackurls` и `katana` для поиска JS-ресурсов, загружает их и ищет опасные конструкции (например, `innerHTML`, `document.write`, `$.parseHTML` и другие).
 
-## Возможности
+Возможности
 -  Поиск JS-файлов через **waybackurls** и **katana** (запускаются параллельно).
 -  Асинхронная загрузка файлов для максимальной скорости.
 -  Поиск по списку опасных функций/методов (DOM sinks).
 -  Красивый вывод с подсветкой найденных совпадений.
 -  Экспорт результатов в **JSON** и **CSV** для дальнейшего анализа.
 
-## Установка
+Установка
 1. Клонируй репозиторий:
-   ```bash
+2. 
    git clone https://github.com/yourname/dom-xss-hunter.git
    cd dom-xss-hunter
-````
 
-2. Установи зависимости Python:
 
-   ```bash
+3. Установи зависимости Python:
+
+
    pip install -r requirements.txt
-   ```
 
-3. Убедись, что установлены внешние инструменты:
+
+4. Убедись, что установлены внешние инструменты:
 
    * [waybackurls](https://github.com/tomnomnom/waybackurls)
    * [katana](https://github.com/projectdiscovery/katana)
